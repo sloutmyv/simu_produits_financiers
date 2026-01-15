@@ -4,10 +4,10 @@ Ce projet est un mini simulateur de produits financiers permettant de comparer l
 
 ## Fonctionnalités
 
-- **Comparaison Multi-Axes** : Affiche deux actifs sur un même graphique avec des échelles (ordonnées) indépendantes.
+- **Comparaison Multi-Axes** : Affiche deux actifs sur des graphiques séparés mais alignés temporellement.
+- **Simulateur d'Investissement** : Calcule l'évolution d'un portefeuille en fonction d'une somme investie, d'une date d'achat et d'une répartition personnalisée.
+- **Bilan Financier** : Affiche la valeur actuelle, la plus-value latente et la performance globale du portefeuille.
 - **Données en temps réel** : Utilise l'API `yfinance` pour récupérer les cours les plus récents.
-- **Flexibilité** : L'utilisateur peut modifier les tickers et choisir la période d'analyse (1 mois à Max).
-- **Indicateurs de performance** : Affiche le dernier prix et la performance sur la période sélectionnée pour chaque actif.
 
 ## Installation
 
