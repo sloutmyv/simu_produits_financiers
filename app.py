@@ -201,10 +201,7 @@ with st.spinner('Chargement des données...'):
                 fig.update_yaxes(title_text="Var. (%)", row=3, col=1, secondary_y=True, zeroline=True, zerolinecolor='white')
 
             # Display plot
-            st.plotly_chart(fig, use_container_width=True)
-
-            # Display plot
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="financial_simulation_charts")
             
             # --- Metrics ---
             st.divider()
