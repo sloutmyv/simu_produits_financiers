@@ -60,13 +60,21 @@ with st.spinner('Chargement des données...'):
             # Ensure index is datetime
             close_prices.index = pd.to_datetime(close_prices.index)
             
+            # --- Performance Calculations ---
+            # Ticker 1 Perf
+            ticker1_start = close_prices[ticker1_input].dropna().iloc[0]
+            perf_evol1 = (close_prices[ticker1_input] / ticker1_start - 1) * 100
+            
+            # Ticker 2 Perf
+            ticker2_start = close_prices[ticker2_input].dropna().iloc[0]
+            perf_evol2 = (close_prices[ticker2_input] / ticker2_start - 1) * 100
+            
             # --- Portfolio Calculation ---
             # Sum allocated to each
             sum1 = investment_sum * (split_ratio / 100)
             sum2 = investment_sum * (1 - split_ratio / 100)
             
             # Find closest date in index to purchase_date
-            # We filter data from purchase_date onwards
             mask = close_prices.index >= pd.to_datetime(purchase_date)
             sim_data = close_prices.loc[mask]
             
@@ -85,44 +93,96 @@ with st.spinner('Chargement des données...'):
                 # Portfolio value over time
                 portfolio_evol = (sim_data[ticker1_input] * shares1) + (sim_data[ticker2_input] * shares2)
                 portfolio_evol.name = "Valeur Portefeuille"
+                
+                # Percentage variation evolution
+                perf_evol_port = (portfolio_evol / investment_sum - 1) * 100
 
             # --- Visualisation ---
             # Create Plotly figure with 3 subplots vertically if portfolio exists
             rows = 3 if portfolio_evol is not None else 2
-            titles = [ticker1_input, ticker2_input]
+            titles = [f"Prix {ticker1_input} (€ & %)", f"Prix {ticker2_input} (€ & %)"]
+            
+            specs = [[{"secondary_y": True}], [{"secondary_y": True}]]
             if portfolio_evol is not None:
-                titles.append("Évolution du Portefeuille (€)")
+                titles.append("Évolution du Portefeuille (€ & %)")
+                specs.append([{"secondary_y": True}])
                 
             fig = make_subplots(
                 rows=rows, cols=1, 
                 shared_xaxes=True, 
                 vertical_spacing=0.05,
-                subplot_titles=titles
+                subplot_titles=titles,
+                specs=specs
             )
 
-            # Add Traces
-            fig.add_trace(
-                go.Scatter(x=close_prices.index, y=close_prices[ticker1_input], name=ticker1_input, mode='lines'),
-                row=1, col=1
-            )
+            # Helper function to add gated traces
+            def add_perf_traces(fig, row, perf_series, name_suffix):
+                # Positive part
+                fig.add_trace(
+                    go.Scatter(
+                        x=perf_series.index, 
+                        y=perf_series.map(lambda x: x if x > 0 else 0), 
+                        name=f"Gain {name_suffix} (%)", 
+                        mode='lines', 
+                        line=dict(width=0), 
+                        fill='tozeroy', 
+                        fillcolor='rgba(0, 255, 0, 0.2)'
+                    ),
+                    row=row, col=1, secondary_y=True
+                )
+                # Negative part
+                fig.add_trace(
+                    go.Scatter(
+                        x=perf_series.index, 
+                        y=perf_series.map(lambda x: x if x < 0 else 0), 
+                        name=f"Perte {name_suffix} (%)", 
+                        mode='lines', 
+                        line=dict(width=0), 
+                        fill='tozeroy', 
+                        fillcolor='rgba(255, 0, 0, 0.2)'
+                    ),
+                    row=row, col=1, secondary_y=True
+                )
+                # Main Line for %
+                fig.add_trace(
+                    go.Scatter(
+                        x=perf_series.index, 
+                        y=perf_series, 
+                        name=f"Variation {name_suffix} (%)", 
+                        mode='lines', 
+                        line=dict(color='white', width=1.5, dash='dot')
+                    ),
+                    row=row, col=1, secondary_y=True
+                )
 
+            # --- Subplot 1: Ticker 1 ---
             fig.add_trace(
-                go.Scatter(x=close_prices.index, y=close_prices[ticker2_input], name=ticker2_input, mode='lines'),
-                row=2, col=1
+                go.Scatter(x=close_prices.index, y=close_prices[ticker1_input], name=f"Prix {ticker1_input}", mode='lines', line=dict(color='#1f77b4')),
+                row=1, col=1, secondary_y=False
             )
+            add_perf_traces(fig, 1, perf_evol1, ticker1_input)
+
+            # --- Subplot 2: Ticker 2 ---
+            fig.add_trace(
+                go.Scatter(x=close_prices.index, y=close_prices[ticker2_input], name=f"Prix {ticker2_input}", mode='lines', line=dict(color='#ff7f0e')),
+                row=2, col=1, secondary_y=False
+            )
+            add_perf_traces(fig, 2, perf_evol2, ticker2_input)
             
+            # --- Subplot 3: Portfolio ---
             if portfolio_evol is not None:
                 fig.add_trace(
-                    go.Scatter(x=portfolio_evol.index, y=portfolio_evol, name="Portefeuille", mode='lines', line=dict(color='gold', width=3)),
-                    row=3, col=1
+                    go.Scatter(x=portfolio_evol.index, y=portfolio_evol, name="Valeur Portefeuille (€)", mode='lines', line=dict(color='lightgrey', width=1)),
+                    row=3, col=1, secondary_y=False
                 )
+                add_perf_traces(fig, 3, perf_evol_port, "Portfolio")
 
             # Add figure title
             fig.update_layout(
-                height=900 if rows == 3 else 700,
+                height=1000 if rows == 3 else 700,
                 title_text=f"Analyse et Simulation ({period_label})",
                 hovermode="x unified",
-                template="plotly_white",
+                template="plotly_dark",
                 showlegend=False
             )
 
@@ -130,10 +190,18 @@ with st.spinner('Chargement des données...'):
             fig.update_xaxes(title_text="Date", row=rows, col=1)
 
             # Set y-axes titles
-            fig.update_yaxes(title_text="Prix", row=1, col=1)
-            fig.update_yaxes(title_text="Prix", row=2, col=1)
+            fig.update_yaxes(title_text="Prix (€)", row=1, col=1, secondary_y=False)
+            fig.update_yaxes(title_text="Var. (%)", row=1, col=1, secondary_y=True, zeroline=True, zerolinecolor='white')
+            
+            fig.update_yaxes(title_text="Prix (€)", row=2, col=1, secondary_y=False)
+            fig.update_yaxes(title_text="Var. (%)", row=2, col=1, secondary_y=True, zeroline=True, zerolinecolor='white')
+            
             if rows == 3:
-                fig.update_yaxes(title_text="Valeur (€)", row=3, col=1)
+                fig.update_yaxes(title_text="Valeur (€)", row=3, col=1, secondary_y=False)
+                fig.update_yaxes(title_text="Var. (%)", row=3, col=1, secondary_y=True, zeroline=True, zerolinecolor='white')
+
+            # Display plot
+            st.plotly_chart(fig, use_container_width=True)
 
             # Display plot
             st.plotly_chart(fig, use_container_width=True)
