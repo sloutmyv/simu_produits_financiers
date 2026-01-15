@@ -68,50 +68,46 @@ else:
     close_prices = data[['Close']]
 close_prices.index = pd.to_datetime(close_prices.index)
 
-# --- App Layout with Tabs ---
-tab1, tab2 = st.tabs(["📈 Analyse des Cours", "🧪 Simulateur de Produits"])
+# --- Market Analysis Section ---
+st.header("📈 Analyse des Marchés")
 
-# ==========================================
-# TAB 1: MARKET ANALYSIS
-# ==========================================
-with tab1:
-    # Perf Calculations for Market Analysis
-    t1_s = close_prices[ticker1_input].dropna().iloc[0]
-    p_ev1 = (close_prices[ticker1_input] / t1_s - 1) * 100
-    t2_s = close_prices[ticker2_input].dropna().iloc[0]
-    p_ev2 = (close_prices[ticker2_input] / t2_s - 1) * 100
+# Perf Calculations for Market Analysis
+t1_s = close_prices[ticker1_input].dropna().iloc[0]
+p_ev1 = (close_prices[ticker1_input] / t1_s - 1) * 100
+t2_s = close_prices[ticker2_input].dropna().iloc[0]
+p_ev2 = (close_prices[ticker2_input] / t2_s - 1) * 100
 
-    fig_mkt = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05,
-                            subplot_titles=[f"Cours {ticker1_input}", f"Cours {ticker2_input}"],
-                            specs=[[{"secondary_y": True}], [{"secondary_y": True}]])
+fig_mkt = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05,
+                        subplot_titles=[f"Cours {ticker1_input}", f"Cours {ticker2_input}"],
+                        specs=[[{"secondary_y": True}], [{"secondary_y": True}]])
 
-    def add_perf_layer(fig, row, series, name):
-        fig.add_trace(go.Scatter(x=series.index, y=series, name=f"Var {name}", mode='lines', 
-                                 line=dict(color='white', width=1, dash='dot')), row=row, col=1, secondary_y=True)
-        fig.add_trace(go.Scatter(x=series.index, y=series.map(lambda x: x if x > 0 else 0), fill='tozeroy', 
-                                 fillcolor='rgba(0,255,0,0.1)', line=dict(width=0), showlegend=False), row=row, col=1, secondary_y=True)
-        fig.add_trace(go.Scatter(x=series.index, y=series.map(lambda x: x if x < 0 else 0), fill='tozeroy', 
-                                 fillcolor='rgba(255,0,0,0.1)', line=dict(width=0), showlegend=False), row=row, col=1, secondary_y=True)
+def add_perf_layer(fig, row, series, name):
+    fig.add_trace(go.Scatter(x=series.index, y=series, name=f"Var {name}", mode='lines', 
+                             line=dict(color='white', width=1, dash='dot')), row=row, col=1, secondary_y=True)
+    fig.add_trace(go.Scatter(x=series.index, y=series.map(lambda x: x if x > 0 else 0), fill='tozeroy', 
+                             fillcolor='rgba(0,255,0,0.1)', line=dict(width=0), showlegend=False), row=row, col=1, secondary_y=True)
+    fig.add_trace(go.Scatter(x=series.index, y=series.map(lambda x: x if x < 0 else 0), fill='tozeroy', 
+                             fillcolor='rgba(255,0,0,0.1)', line=dict(width=0), showlegend=False), row=row, col=1, secondary_y=True)
 
-    fig_mkt.add_trace(go.Scatter(x=close_prices.index, y=close_prices[ticker1_input], name=ticker1_input), row=1, col=1, secondary_y=False)
-    add_perf_layer(fig_mkt, 1, p_ev1, ticker1_input)
-    fig_mkt.add_trace(go.Scatter(x=close_prices.index, y=close_prices[ticker2_input], name=ticker2_input), row=2, col=1, secondary_y=False)
-    add_perf_layer(fig_mkt, 2, p_ev2, ticker2_input)
+fig_mkt.add_trace(go.Scatter(x=close_prices.index, y=close_prices[ticker1_input], name=ticker1_input), row=1, col=1, secondary_y=False)
+add_perf_layer(fig_mkt, 1, p_ev1, ticker1_input)
+fig_mkt.add_trace(go.Scatter(x=close_prices.index, y=close_prices[ticker2_input], name=ticker2_input), row=2, col=1, secondary_y=False)
+add_perf_layer(fig_mkt, 2, p_ev2, ticker2_input)
 
-    fig_mkt.update_layout(height=700, template="plotly_dark", showlegend=False, hovermode="x unified")
-    fig_mkt.update_yaxes(title_text="Prix (€)", secondary_y=False)
-    fig_mkt.update_yaxes(title_text="Var %", secondary_y=True, zerolinecolor='white')
-    st.plotly_chart(fig_mkt, use_container_width=True, key="mkt_analysis")
+fig_mkt.update_layout(height=700, template="plotly_dark", showlegend=False, hovermode="x unified")
+fig_mkt.update_yaxes(title_text="Prix (€)", secondary_y=False)
+fig_mkt.update_yaxes(title_text="Var %", secondary_y=True, zerolinecolor='white')
+st.plotly_chart(fig_mkt, use_container_width=True, key="mkt_analysis")
 
-    # Alpha Indicator
-    diff = p_ev1.iloc[-1] - p_ev2.iloc[-1]
-    st.info(f"Performance Relative : **{ticker1_input}** {'surperforme' if diff > 0 else 'sous-performe'} **{ticker2_input}** de **{abs(diff):.2f}%**.")
+# Alpha Indicator
+diff = p_ev1.iloc[-1] - p_ev2.iloc[-1]
+st.info(f"Performance Relative : **{ticker1_input}** {'surperforme' if diff > 0 else 'sous-performe'} **{ticker2_input}** de **{abs(diff):.2f}%**.")
 
-# ==========================================
-# TAB 2: DERIVATIVES SIMULATOR
-# ==========================================
-with tab2:
-    st.markdown("### Configurer votre stratégie d'investissement")
+st.divider()
+
+# --- Derivatives Simulator Section ---
+st.header("🧪 Simulateur de Produits")
+st.markdown("### Configurer votre stratégie d'investissement")
     
     col_params1, col_params2 = st.columns(2)
     
