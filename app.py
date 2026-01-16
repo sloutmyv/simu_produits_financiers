@@ -183,7 +183,15 @@ def run_simulation(ticker, params):
     
     # 2. Warrant Simulation (Black-Scholes)
     def calc_warrant_series(row_price, current_date):
-        days_to_expiry = (pd.to_datetime(w_expiry) - pd.to_datetime(current_date)).days
+        expiry_dt = pd.to_datetime(w_expiry)
+        curr_dt = pd.to_datetime(current_date)
+        
+        if curr_dt >= expiry_dt:
+            # Freeze at intrinsic value on the last available price before or at expiry
+            price_at_expiry = get_price_at_date(close_prices[ticker], w_expiry)
+            return max(0, price_at_expiry - w_strike) / w_ratio
+            
+        days_to_expiry = (expiry_dt - curr_dt).days
         T = max(0, days_to_expiry / 365.0)
         return black_scholes_call(row_price, w_strike, T, w_vol/100.0) / w_ratio
 
@@ -250,3 +258,31 @@ def plot_sim(sim_df, ticker, t_strike, w_strike):
 col_res = st.columns(2)
 with col_res[0]: plot_sim(sim1, ticker1_input, p1_config[2], p1_config[4])
 with col_res[1]: plot_sim(sim2, ticker2_input, p2_config[2], p2_config[4])
+
+# --- Methodology Section ---
+st.divider()
+with st.expander("📚 Méthodologie et Détails des Calculs"):
+    st.markdown("""
+    ### 1. Modèle Black-Scholes (Warrants)
+    Le prix du Warrant est calculé à l'aide de la formule de Black-Scholes pour un Call :
+    $$C = S \cdot N(d_1) - K \cdot e^{-rT} \cdot N(d_2)$$
+    
+    Où :
+    - **$S$ (Spot)** : Cours actuel du sous-jacent.
+    - **$K$ (Strike)** : Prix d'exercice du warrant.
+    - **$T$ (Time)** : Temps restant jusqu'à l'échéance (en années).
+    - **$\sigma$ (Sigma)** : Volatilité implicite.
+    - **$r$** : Taux d'intérêt sans risque (fixé à 0% dans ce simulateur).
+    - **$N(x)$** : Fonction de répartition de la loi normale standard.
+    
+    ### 2. Les "Grecques" simulées
+    - **Theta (Érosion Temporelle)** : Représente la perte de valeur du warrant due au passage du temps. Plus $T$ diminue, plus $C$ baisse, toutes choses égales par ailleurs. Cette perte s'accélère à l'approche de l'échéance.
+    - **Vega (Sensibilité Volatilité)** : Mesure l'impact d'un changement de volatilité implicite. Une hausse de $\sigma$ augmente la probabilité que le warrant finisse "dans la monnaie", augmentant ainsi son prix.
+    - **L'Échéance** : À la date d'échéance, la valeur du warrant est gelée à sa valeur intrinsèque : $\max(0, S_{\text{échéance}} - K)$.
+    
+    ### 3. Modèle Turbo (Barrière Désactivante)
+    Contrairement au Warrant, le Turbo a une valeur linéaire :
+    $$\text{Prix} = \frac{\max(0, S - \text{Strike})}{\text{Parité}}$$
+    
+    **Knock-Out (KO)** : Si à n'importe quel moment $S \leq \text{Strike}$, le produit est immédiatement désactivé et sa valeur devient définitivement **0 €**.
+    """)
