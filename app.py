@@ -5,6 +5,8 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
+import math
+from scipy.stats import norm
 
 # Page configuration
 st.set_page_config(page_title="Mini simulateur de produits financier", layout="wide")
@@ -19,6 +21,19 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title("📊 Mini simulateur de produits financier")
+
+# --- Mathematical Model: Black-Scholes ---
+def black_scholes_call(S, K, T, sigma, r=0.0):
+    if T <= 0:
+        return max(0, S - K)
+    if sigma <= 0:
+        return max(0, S - K)
+    
+    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
+    
+    call_price = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+    return call_price
 
 # --- STEP 1: Global Selection ---
 st.sidebar.header("🎯 Choix des Titres")
@@ -40,7 +55,7 @@ def get_data(tickers, period):
     return data
 
 with st.spinner('Chargement des données...'):
-    data = get_data([ticker1_input, ticker2_input], "max") # Get max to allow flexible purchase dates
+    data = get_data([ticker1_input, ticker2_input], "max")
 
 if data.empty:
     st.error("Aucune donnée trouvée. Veuillez vérifier les tickers.")
@@ -53,8 +68,6 @@ else:
     close_prices = data[['Close']]
 close_prices.index = pd.to_datetime(close_prices.index)
 
-# Filter for the market analysis chart (based on selected period)
-# period_code needs translation to date range for clipping
 today = close_prices.index[-1]
 if period_code == "1y": start_mkt = today - timedelta(days=365)
 elif period_code == "1mo": start_mkt = today - timedelta(days=30)
@@ -72,7 +85,6 @@ st.sidebar.divider()
 st.sidebar.header("⚙️ Configuration Simulation")
 
 def get_price_at_date(series, target_date):
-    # Find the closest date available <= target_date
     available_dates = series.dropna().index
     valid_dates = available_dates[available_dates <= pd.to_datetime(target_date)]
     if len(valid_dates) == 0:
@@ -83,29 +95,29 @@ def sidebar_simulation_params(ticker, series, key_suffix):
     st.sidebar.subheader(f"Stratégie {ticker}")
     invest = st.sidebar.number_input(f"Somme investie ({ticker})", value=1000, key=f"inv_{key_suffix}")
     
-    # Selection of purchase date
     min_date = series.index[0].to_pydatetime()
     max_date = series.index[-1].to_pydatetime()
     default_date = max(min_date, (datetime.now() - timedelta(days=365)))
     date_p = st.sidebar.date_input(f"Date d'achat", value=default_date, min_value=min_date, max_value=max_date, key=f"date_{key_suffix}")
     
-    # Get price at that date to calculate 5x leverage default
     price_at_purchase = get_price_at_date(series, date_p)
     default_strike_5x = float(price_at_purchase * 0.8)
     
     with st.sidebar.expander(f"Produits Dérivés {ticker}"):
-        st.markdown(f"*(Basé sur cours à l'achat : {price_at_purchase:,.2f} €)*")
+        st.markdown(f"*(Sous-jacent à l'achat : {price_at_purchase:,.2f} €)*")
+        
         st.markdown("**Turbo Call**")
-        t_strike = st.number_input("Strike (L:5x si 80% du cours)", value=default_strike_5x, key=f"tst_{key_suffix}")
-        t_ratio = st.number_input("Parité", value=10.0, key=f"tra_{key_suffix}")
+        t_strike = st.number_input("Strike Turbo", value=default_strike_5x, key=f"tst_{key_suffix}")
+        t_ratio = st.number_input("Parité Turbo", value=10.0, key=f"tra_{key_suffix}")
         
         st.markdown("---")
-        st.markdown("**Warrant Call**")
+        st.markdown("**Warrant Call (BS Model)**")
         w_strike = st.number_input("Strike Warrant", value=default_strike_5x, key=f"wst_{key_suffix}")
         w_ratio = st.number_input("Parité Warrant", value=10.0, key=f"wra_{key_suffix}")
-        w_beta = st.slider("Béta (Effet Levier)", 1.0, 20.0, 5.0, key=f"wbe_{key_suffix}")
+        w_vol = st.slider("Volatilité Implicite (%)", 5, 100, 25, key=f"wvo_{key_suffix}")
+        w_expiry = st.date_input("Date d'échéance", value=date_p + timedelta(days=365), key=f"wex_{key_suffix}")
         
-    return invest, date_p, t_strike, t_ratio, w_strike, w_ratio, w_beta
+    return invest, date_p, t_strike, t_ratio, w_strike, w_ratio, w_vol, w_expiry
 
 p1_config = sidebar_simulation_params(ticker1_input, close_prices[ticker1_input], "t1")
 p2_config = sidebar_simulation_params(ticker2_input, close_prices[ticker2_input], "t2")
@@ -149,7 +161,7 @@ st.divider()
 st.header("🧪 Simulateur de Produits")
 
 def run_simulation(ticker, params):
-    invest, date_p, t_strike, t_ratio, w_strike, w_ratio, w_beta = params
+    invest, date_p, t_strike, t_ratio, w_strike, w_ratio, w_vol, w_expiry = params
     
     mask = close_prices.index >= pd.to_datetime(date_p)
     prices = close_prices[ticker].loc[mask]
@@ -159,25 +171,32 @@ def run_simulation(ticker, params):
     shares_stock = invest / start_price
     sim_stock = prices * shares_stock
     
-    # Turbo
-    t_val_start = max(0, (start_price - t_strike) / t_ratio)
-    turbo_val_unit = (prices - t_strike) / t_ratio
-    turbo_val_unit = turbo_val_unit.apply(lambda x: max(0, x))
+    # 1. Turbo Simulation
+    t_val_unit = (prices - t_strike) / t_ratio
+    t_val_unit = t_val_unit.apply(lambda x: max(0, x))
     ko_mask = (prices <= t_strike).cummax()
-    turbo_val_unit[ko_mask] = 0
-    shares_turbo = invest / t_val_start if t_val_start > 0 else 0
-    sim_turbo = turbo_val_unit * shares_turbo
+    t_val_unit[ko_mask] = 0
     
-    # Warrant
-    stock_perf = (prices / start_price - 1)
-    warrant_perf = stock_perf * w_beta
-    sim_warrant = invest * (1 + warrant_perf)
-    sim_warrant = sim_warrant.apply(lambda x: max(0, x))
-    w_val_start = max(0.01, (start_price - w_strike) / w_ratio) # Theoretical initial intrinsic
+    t_val_start = max(0, (start_price - t_strike) / t_ratio)
+    shares_turbo = invest / t_val_start if t_val_start > 0 else 0
+    sim_turbo = t_val_unit * shares_turbo
+    
+    # 2. Warrant Simulation (Black-Scholes)
+    def calc_warrant_series(row_price, current_date):
+        days_to_expiry = (pd.to_datetime(w_expiry) - pd.to_datetime(current_date)).days
+        T = max(0, days_to_expiry / 365.0)
+        return black_scholes_call(row_price, w_strike, T, w_vol/100.0) / w_ratio
+
+    w_val_unit = pd.Series([calc_warrant_series(p, d) for p, d in zip(prices, prices.index)], index=prices.index)
+    w_val_start = calc_warrant_series(start_price, date_p)
+    shares_warrant = invest / w_val_start if w_val_start > 0 else 0
+    sim_warrant = w_val_unit * shares_warrant
     
     # Leverage at start
     lev_t = (start_price / (t_val_start * t_ratio)) if (t_val_start > 0) else 0
-    lev_w = w_beta
+    # Effective Leverage (Omega) for Warrant = Delta * S / WarrantPrice
+    # Simplified approximation for display
+    lev_w = (start_price / (w_val_start * w_ratio)) if (w_val_start > 0) else 0
     
     return pd.DataFrame({'Action': sim_stock, 'Turbo': sim_turbo, 'Warrant': sim_warrant, 'Underlying': prices}, index=prices.index), start_price, t_val_start, w_val_start, lev_t, lev_w
 
@@ -208,34 +227,21 @@ def plot_sim(sim_df, ticker, t_strike, w_strike):
         return
     
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    
-    # Underlying Price on secondary Y axis
     fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Underlying'], name='Cours Sous-jacent', 
-                             line=dict(color='rgba(255, 255, 255, 0.3)', width=1.5), opacity=0.8), 
-                  secondary_y=True)
+                             line=dict(color='rgba(255, 255, 255, 0.3)', width=1.5), opacity=0.8), secondary_y=True)
     
-    # Investment curves on primary Y axis
-    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Action'], name='Action', 
-                             line=dict(color='rgba(52, 152, 219, 0.8)')), secondary_y=False)
-    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Turbo'], name='Turbo (KO)', 
-                             line=dict(color='rgba(231, 76, 60, 0.9)', width=2.5)), secondary_y=False)
-    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Warrant'], name='Warrant', 
-                             line=dict(color='rgba(241, 196, 15, 0.8)')), secondary_y=False)
+    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Action'], name='Action', line=dict(color='rgba(52, 152, 219, 0.8)')), secondary_y=False)
+    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Turbo'], name='Turbo (KO)', line=dict(color='rgba(231, 76, 60, 0.9)', width=2.5)), secondary_y=False)
+    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Warrant'], name='Warrant (BS)', line=dict(color='rgba(241, 196, 15, 0.8)')), secondary_y=False)
     
-    # Horizontal lines for strikes (tied to secondary_y prices)
-    fig.add_trace(go.Scatter(x=[sim_df.index[0], sim_df.index[-1]], y=[t_strike, t_strike], 
-                             name=f"Strike Turbo ({t_strike:,.0f})", 
-                             mode='lines', line=dict(color='rgba(231, 76, 60, 0.4)', dash='dash', width=2)), 
-                  secondary_y=True)
-    
-    fig.add_trace(go.Scatter(x=[sim_df.index[0], sim_df.index[-1]], y=[w_strike, w_strike], 
-                             name=f"Strike Warrant ({w_strike:,.0f})", 
-                             mode='lines', line=dict(color='rgba(241, 196, 15, 0.4)', dash='dot', width=2)), 
-                  secondary_y=True)
+    # Strike lines tied to secondary Y
+    fig.add_trace(go.Scatter(x=[sim_df.index[0], sim_df.index[-1]], y=[t_strike, t_strike], name="Strike Turbo",
+                             mode='lines', line=dict(color='rgba(231, 76, 60, 0.3)', dash='dash')), secondary_y=True)
+    fig.add_trace(go.Scatter(x=[sim_df.index[0], sim_df.index[-1]], y=[w_strike, w_strike], name="Strike Warrant",
+                             mode='lines', line=dict(color='rgba(241, 196, 15, 0.3)', dash='dot')), secondary_y=True)
     
     fig.update_layout(title=f"Evolution de l'investissement ({ticker})", height=500, template="plotly_dark",
                       hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-    
     fig.update_yaxes(title_text="Valeur Investissement (€)", secondary_y=False)
     fig.update_yaxes(title_text="Cours Sous-jacent (€)", secondary_y=True, showgrid=False)
     
