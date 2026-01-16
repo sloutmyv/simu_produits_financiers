@@ -168,10 +168,15 @@ def run_simulation(ticker, params):
     sim_warrant = sim_warrant.apply(lambda x: max(0, x))
     w_val_start = max(0, (start_price - w_strike) / w_ratio)
     
-    return pd.DataFrame({'Action': sim_stock, 'Turbo': sim_turbo, 'Warrant': sim_warrant}, index=prices.index), start_price, t_val_start, w_val_start
+    # Leverage estimations at start
+    lev_turbo = (start_price / (t_val_start * t_ratio)) if t_val_start > 0 else 0
+    # For simplified warrant models, beta is the leverage
+    lev_warrant = w_beta
+    
+    return pd.DataFrame({'Action': sim_stock, 'Turbo': sim_turbo, 'Warrant': sim_warrant}, index=prices.index), start_price, t_val_start, w_val_start, lev_turbo, lev_warrant
 
-sim1, sp1, t1v, w1v = run_simulation(ticker1_input, p1_config)
-sim2, sp2, t2v, w2v = run_simulation(ticker2_input, p2_config)
+sim1, sp1, t1v, w1v, lt1, lw1 = run_simulation(ticker1_input, p1_config)
+sim2, sp2, t2v, w2v, lt2, lw2 = run_simulation(ticker2_input, p2_config)
 
 # Display Context Information
 cols_ctx = st.columns(2)
@@ -180,15 +185,15 @@ with cols_ctx[0]:
         st.markdown(f"#### 📅 Contexte {ticker1_input} au {p1_config[1]}")
         c1, c2, c3 = st.columns(3)
         c1.metric("Prix Sous-jacent", f"{sp1:,.2f} €")
-        c2.metric("Val. Init Turbo", f"{t1v:,.2f} €")
-        c3.metric("Val. Init Warrant", f"{w1v:,.2f} €")
+        c2.metric("Val. Init Turbo", f"{t1v:,.2f} €", delta=f"Levier: {lt1:.1f}x", delta_color="normal")
+        c3.metric("Val. Init Warrant", f"{w1v:,.2f} €", delta=f"Levier: {lw1:.1f}x", delta_color="normal")
 with cols_ctx[1]:
     if sp2:
         st.markdown(f"#### 📅 Contexte {ticker2_input} au {p2_config[1]}")
         c1, c2, c3 = st.columns(3)
         c1.metric("Prix Sous-jacent", f"{sp2:,.2f} €")
-        c2.metric("Val. Init Turbo", f"{t2v:,.2f} €")
-        c3.metric("Val. Init Warrant", f"{w2v:,.2f} €")
+        c2.metric("Val. Init Turbo", f"{t2v:,.2f} €", delta=f"Levier: {lt2:.1f}x", delta_color="normal")
+        c3.metric("Val. Init Warrant", f"{w2v:,.2f} €", delta=f"Levier: {lw2:.1f}x", delta_color="normal")
 
 def plot_sim(sim_df, ticker):
     if sim_df is None: 
