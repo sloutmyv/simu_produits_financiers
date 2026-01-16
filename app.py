@@ -306,4 +306,41 @@ with st.expander("📚 Méthodologie et Détails des Calculs"):
     - **Turbo Put** : $\text{Prix} = \frac{\max(0, \text{Strike} - S)}{\text{Parité}}$. KO si $S \geq \text{Strike}$.
     
     **Knock-Out (KO)** : Si la barrière est touchée (Strike), le produit est immédiatement désactivé et sa valeur devient **0 €**.
+    
+    ### 4. Visualisation Pédagogique (Exemple sur Ticker 1)
     """)
+    
+    # --- Pedagogical Charts Logic ---
+    # Using Ticker 1 parameters as baseline
+    bs_s = sp1 if sp1 else 100
+    bs_k = p1_config['w_strike']
+    bs_v = p1_config['w_vol'] / 100.0
+    bs_type = p1_config['w_type']
+    bs_ratio = p1_config['w_ratio']
+    
+    # 1. Theta Visualization (Time decay)
+    days_range = np.linspace(365, 0, 100)
+    theta_prices = [black_scholes(bs_s, bs_k, d/365.0, bs_v, type=bs_type) / bs_ratio for d in days_range]
+    
+    fig_theta = go.Figure()
+    fig_theta.add_trace(go.Scatter(x=days_range, y=theta_prices, name="Prix du Warrant", line=dict(color="#f1c40f", width=3)))
+    fig_theta.update_layout(title="Impact du Temps (Theta)", xaxis_title="Jours restants", yaxis_title="Prix (€)", 
+                            height=350, template="plotly_dark", xaxis_autorange="reversed")
+    
+    # 2. Vega Visualization (Volatility impact)
+    vol_range = np.linspace(0.05, 1.0, 100)
+    # Using a fixed T = 0.5 year for vega chart
+    vega_prices = [black_scholes(bs_s, bs_k, 0.5, v, type=bs_type) / bs_ratio for v in vol_range]
+    
+    fig_vega = go.Figure()
+    fig_vega.add_trace(go.Scatter(x=vol_range * 100, y=vega_prices, name="Prix du Warrant", line=dict(color="#9b59b6", width=3)))
+    fig_vega.update_layout(title="Impact de la Volatilité (Vega)", xaxis_title="Volatilité Implicite (%)", yaxis_title="Prix (€)", 
+                           height=350, template="plotly_dark")
+    
+    col_ped1, col_ped2 = st.columns(2)
+    with col_ped1:
+        st.markdown("**Theta : Plus le temps passe, plus le warrant perd de sa valeur.**")
+        st.plotly_chart(fig_theta, use_container_width=True, key="ped_theta")
+    with col_ped2:
+        st.markdown("**Vega : Plus le marché est volatil, plus le warrant est cher.**")
+        st.plotly_chart(fig_vega, use_container_width=True, key="ped_vega")
