@@ -222,11 +222,16 @@ def plot_sim(sim_df, ticker, t_strike, w_strike):
     fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Warrant'], name='Warrant', 
                              line=dict(color='rgba(241, 196, 15, 0.8)')), secondary_y=False)
     
-    # Horizontal lines for strikes (linked to secondary_y prices)
-    fig.add_hline(y=t_strike, line_dash="dash", line_color="rgba(231, 76, 60, 0.4)", 
-                  annotation_text=f"Strike Turbo ({t_strike:,.0f})", annotation_position="bottom right")
-    fig.add_hline(y=w_strike, line_dash="dot", line_color="rgba(241, 196, 15, 0.4)", 
-                  annotation_text=f"Strike Warrant ({w_strike:,.0f})", annotation_position="top right")
+    # Horizontal lines for strikes (tied to secondary_y prices)
+    fig.add_trace(go.Scatter(x=[sim_df.index[0], sim_df.index[-1]], y=[t_strike, t_strike], 
+                             name=f"Strike Turbo ({t_strike:,.0f})", 
+                             mode='lines', line=dict(color='rgba(231, 76, 60, 0.4)', dash='dash', width=2)), 
+                  secondary_y=True)
+    
+    fig.add_trace(go.Scatter(x=[sim_df.index[0], sim_df.index[-1]], y=[w_strike, w_strike], 
+                             name=f"Strike Warrant ({w_strike:,.0f})", 
+                             mode='lines', line=dict(color='rgba(241, 196, 15, 0.4)', dash='dot', width=2)), 
+                  secondary_y=True)
     
     fig.update_layout(title=f"Evolution de l'investissement ({ticker})", height=500, template="plotly_dark",
                       hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
