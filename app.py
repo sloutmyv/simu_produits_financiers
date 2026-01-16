@@ -179,7 +179,7 @@ def run_simulation(ticker, params):
     lev_t = (start_price / (t_val_start * t_ratio)) if (t_val_start > 0) else 0
     lev_w = w_beta
     
-    return pd.DataFrame({'Action': sim_stock, 'Turbo': sim_turbo, 'Warrant': sim_warrant}, index=prices.index), start_price, t_val_start, w_val_start, lev_t, lev_w
+    return pd.DataFrame({'Action': sim_stock, 'Turbo': sim_turbo, 'Warrant': sim_warrant, 'Underlying': prices}, index=prices.index), start_price, t_val_start, w_val_start, lev_t, lev_w
 
 sim1, sp1, t1v, w1v, lt1, lw1 = run_simulation(ticker1_input, p1_config)
 sim2, sp2, t2v, w2v, lt2, lw2 = run_simulation(ticker2_input, p2_config)
@@ -202,18 +202,40 @@ with cols_ctx[1]:
         c2.metric("Val. Init Turbo", f"{t2v:,.2f} €", delta=f"Levier: {lt2:.1f}x", delta_color="normal")
         c3.metric("Val. Init Warrant", f"{w2v:,.2f} €", delta=f"Levier: {lw2:.1f}x", delta_color="normal")
 
-def plot_sim(sim_df, ticker):
+def plot_sim(sim_df, ticker, t_strike, w_strike):
     if sim_df is None: 
         st.warning(f"Pas de données disponibles pour {ticker} à cette date.")
         return
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Action'], name='Action', line=dict(color='#3498db')))
-    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Turbo'], name='Turbo (KO)', line=dict(color='#e74c3c', width=3)))
-    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Warrant'], name='Warrant', line=dict(color='#f1c40f')))
+    
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    # Underlying Price on secondary Y axis
+    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Underlying'], name='Cours Sous-jacent', 
+                             line=dict(color='rgba(255, 255, 255, 0.3)', width=1.5), opacity=0.8), 
+                  secondary_y=True)
+    
+    # Investment curves on primary Y axis
+    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Action'], name='Action', 
+                             line=dict(color='rgba(52, 152, 219, 0.8)')), secondary_y=False)
+    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Turbo'], name='Turbo (KO)', 
+                             line=dict(color='rgba(231, 76, 60, 0.9)', width=2.5)), secondary_y=False)
+    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Warrant'], name='Warrant', 
+                             line=dict(color='rgba(241, 196, 15, 0.8)')), secondary_y=False)
+    
+    # Horizontal lines for strikes (linked to secondary_y prices)
+    fig.add_hline(y=t_strike, line_dash="dash", line_color="rgba(231, 76, 60, 0.4)", 
+                  annotation_text=f"Strike Turbo ({t_strike:,.0f})", annotation_position="bottom right")
+    fig.add_hline(y=w_strike, line_dash="dot", line_color="rgba(241, 196, 15, 0.4)", 
+                  annotation_text=f"Strike Warrant ({w_strike:,.0f})", annotation_position="top right")
+    
     fig.update_layout(title=f"Evolution de l'investissement ({ticker})", height=500, template="plotly_dark",
-                      hovermode="x unified", yaxis_title="Valeur (€)")
+                      hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    
+    fig.update_yaxes(title_text="Valeur Investissement (€)", secondary_y=False)
+    fig.update_yaxes(title_text="Cours Sous-jacent (€)", secondary_y=True, showgrid=False)
+    
     st.plotly_chart(fig, use_container_width=True, key=f"sim_{ticker}")
 
 col_res = st.columns(2)
-with col_res[0]: plot_sim(sim1, ticker1_input)
-with col_res[1]: plot_sim(sim2, ticker2_input)
+with col_res[0]: plot_sim(sim1, ticker1_input, p1_config[2], p1_config[4])
+with col_res[1]: plot_sim(sim2, ticker2_input, p2_config[2], p2_config[4])
