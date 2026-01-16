@@ -262,7 +262,7 @@ with col_res[1]: plot_sim(sim2, ticker2_input, p2_config[2], p2_config[4])
 # --- Methodology Section ---
 st.divider()
 with st.expander("📚 Méthodologie et Détails des Calculs"):
-    st.markdown("""
+    st.markdown(r"""
     ### 1. Modèle Black-Scholes (Warrants)
     Le prix du Warrant est calculé à l'aide de la formule de Black-Scholes pour un Call :
     $$C = S \cdot N(d_1) - K \cdot e^{-rT} \cdot N(d_2)$$
