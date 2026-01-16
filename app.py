@@ -22,18 +22,20 @@ st.markdown("""
 
 st.title("📊 Mini simulateur de produits financier")
 
-# --- Mathematical Model: Black-Scholes ---
-def black_scholes_call(S, K, T, sigma, r=0.0):
+# --- Mathematical Models ---
+def black_scholes(S, K, T, sigma, type='Call', r=0.0):
     if T <= 0:
-        return max(0, S - K)
+        return max(0, S - K) if type == 'Call' else max(0, K - S)
     if sigma <= 0:
-        return max(0, S - K)
+        return max(0, S - K) if type == 'Call' else max(0, K - S)
     
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     d2 = d1 - sigma * np.sqrt(T)
     
-    call_price = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
-    return call_price
+    if type == 'Call':
+        return S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+    else: # Put
+        return K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
 
 # --- STEP 1: Global Selection ---
 st.sidebar.header("🎯 Choix des Titres")
@@ -101,23 +103,31 @@ def sidebar_simulation_params(ticker, series, key_suffix):
     date_p = st.sidebar.date_input(f"Date d'achat", value=default_date, min_value=min_date, max_value=max_date, key=f"date_{key_suffix}")
     
     price_at_purchase = get_price_at_date(series, date_p)
-    default_strike_5x = float(price_at_purchase * 0.8)
     
     with st.sidebar.expander(f"Produits Dérivés {ticker}"):
         st.markdown(f"*(Sous-jacent à l'achat : {price_at_purchase:,.2f} €)*")
         
-        st.markdown("**Turbo Call**")
-        t_strike = st.number_input("Strike Turbo", value=default_strike_5x, key=f"tst_{key_suffix}")
+        st.markdown("**Turbo**")
+        t_type = st.selectbox("Type Turbo", ["Call", "Put"], key=f"tty_{key_suffix}")
+        default_t_strike = float(price_at_purchase * 0.8) if t_type == "Call" else float(price_at_purchase * 1.2)
+        t_strike = st.number_input(f"Strike Turbo ({t_type})", value=default_t_strike, key=f"tst_{key_suffix}")
         t_ratio = st.number_input("Parité Turbo", value=10.0, key=f"tra_{key_suffix}")
         
         st.markdown("---")
-        st.markdown("**Warrant Call (BS Model)**")
-        w_strike = st.number_input("Strike Warrant", value=default_strike_5x, key=f"wst_{key_suffix}")
+        st.markdown("**Warrant (BS Model)**")
+        w_type = st.selectbox("Type Warrant", ["Call", "Put"], key=f"wty_{key_suffix}")
+        default_w_strike = float(price_at_purchase * 0.8) if w_type == "Call" else float(price_at_purchase * 1.2)
+        w_strike = st.number_input(f"Strike Warrant ({w_type})", value=default_w_strike, key=f"wst_{key_suffix}")
         w_ratio = st.number_input("Parité Warrant", value=10.0, key=f"wra_{key_suffix}")
         w_vol = st.slider("Volatilité Implicite (%)", 5, 100, 25, key=f"wvo_{key_suffix}")
         w_expiry = st.date_input("Date d'échéance", value=date_p + timedelta(days=365), key=f"wex_{key_suffix}")
         
-    return invest, date_p, t_strike, t_ratio, w_strike, w_ratio, w_vol, w_expiry
+    return {
+        'invest': invest, 'date_p': date_p, 
+        't_type': t_type, 't_strike': t_strike, 't_ratio': t_ratio,
+        'w_type': w_type, 'w_strike': w_strike, 'w_ratio': w_ratio,
+        'w_vol': w_vol, 'w_expiry': w_expiry
+    }
 
 p1_config = sidebar_simulation_params(ticker1_input, close_prices[ticker1_input], "t1")
 p2_config = sidebar_simulation_params(ticker2_input, close_prices[ticker2_input], "t2")
@@ -160,50 +170,61 @@ st.divider()
 # --- STEP 5: Simulation Logic ---
 st.header("🧪 Simulateur de Produits")
 
-def run_simulation(ticker, params):
-    invest, date_p, t_strike, t_ratio, w_strike, w_ratio, w_vol, w_expiry = params
-    
+def run_simulation(ticker, cfg):
+    date_p = cfg['date_p']
     mask = close_prices.index >= pd.to_datetime(date_p)
     prices = close_prices[ticker].loc[mask]
     if prices.empty: return None, None, None, None, 0, 0
     
     start_price = prices.iloc[0]
-    shares_stock = invest / start_price
+    shares_stock = cfg['invest'] / start_price
     sim_stock = prices * shares_stock
     
     # 1. Turbo Simulation
-    t_val_unit = (prices - t_strike) / t_ratio
-    t_val_unit = t_val_unit.apply(lambda x: max(0, x))
-    ko_mask = (prices <= t_strike).cummax()
-    t_val_unit[ko_mask] = 0
+    t_strike = cfg['t_strike']
+    t_ratio = cfg['t_ratio']
+    if cfg['t_type'] == "Call":
+        t_val_unit = (prices - t_strike) / t_ratio
+        t_val_start = max(0, (start_price - t_strike) / t_ratio)
+        ko_mask = (prices <= t_strike).cummax()
+    else: # Put
+        t_val_unit = (t_strike - prices) / t_ratio
+        t_val_start = max(0, (t_strike - start_price) / t_ratio)
+        ko_mask = (prices >= t_strike).cummax()
     
-    t_val_start = max(0, (start_price - t_strike) / t_ratio)
-    shares_turbo = invest / t_val_start if t_val_start > 0 else 0
+    t_val_unit = t_val_unit.apply(lambda x: max(0, x))
+    t_val_unit[ko_mask] = 0
+    shares_turbo = cfg['invest'] / t_val_start if t_val_start > 0 else 0
     sim_turbo = t_val_unit * shares_turbo
     
     # 2. Warrant Simulation (Black-Scholes)
+    w_strike = cfg['w_strike']
+    w_ratio = cfg['w_ratio']
+    w_expiry = cfg['w_expiry']
+    w_vol = cfg['w_vol']
+    w_type = cfg['w_type']
+
     def calc_warrant_series(row_price, current_date):
         expiry_dt = pd.to_datetime(w_expiry)
         curr_dt = pd.to_datetime(current_date)
-        
         if curr_dt >= expiry_dt:
-            # Freeze at intrinsic value on the last available price before or at expiry
             price_at_expiry = get_price_at_date(close_prices[ticker], w_expiry)
-            return max(0, price_at_expiry - w_strike) / w_ratio
+            if w_type == "Call":
+                return max(0, price_at_expiry - w_strike) / w_ratio
+            else:
+                return max(0, w_strike - price_at_expiry) / w_ratio
             
         days_to_expiry = (expiry_dt - curr_dt).days
         T = max(0, days_to_expiry / 365.0)
-        return black_scholes_call(row_price, w_strike, T, w_vol/100.0) / w_ratio
+        return black_scholes(row_price, w_strike, T, w_vol/100.0, type=w_type) / w_ratio
 
     w_val_unit = pd.Series([calc_warrant_series(p, d) for p, d in zip(prices, prices.index)], index=prices.index)
     w_val_start = calc_warrant_series(start_price, date_p)
-    shares_warrant = invest / w_val_start if w_val_start > 0 else 0
+    shares_warrant = cfg['invest'] / w_val_start if w_val_start > 0 else 0
     sim_warrant = w_val_unit * shares_warrant
     
     # Leverage at start
     lev_t = (start_price / (t_val_start * t_ratio)) if (t_val_start > 0) else 0
-    # Effective Leverage (Omega) for Warrant = Delta * S / WarrantPrice
-    # Simplified approximation for display
     lev_w = (start_price / (w_val_start * w_ratio)) if (w_val_start > 0) else 0
     
     return pd.DataFrame({'Action': sim_stock, 'Turbo': sim_turbo, 'Warrant': sim_warrant, 'Underlying': prices}, index=prices.index), start_price, t_val_start, w_val_start, lev_t, lev_w
@@ -215,21 +236,21 @@ sim2, sp2, t2v, w2v, lt2, lw2 = run_simulation(ticker2_input, p2_config)
 cols_ctx = st.columns(2)
 with cols_ctx[0]:
     if sp1:
-        st.markdown(f"#### 📅 Contexte {ticker1_input} au {p1_config[1]}")
+        st.markdown(f"#### 📅 Contexte {ticker1_input} au {p1_config['date_p']}")
         c1, c2, c3 = st.columns(3)
         c1.metric("Cours Sous-jacent", f"{sp1:,.2f} €")
-        c2.metric("Val. Init Turbo", f"{t1v:,.2f} €", delta=f"Levier: {lt1:.1f}x", delta_color="normal")
-        c3.metric("Val. Init Warrant", f"{w1v:,.2f} €", delta=f"Levier: {lw1:.1f}x", delta_color="normal")
+        c2.metric(f"Val. Init Turbo {p1_config['t_type']}", f"{t1v:,.2f} €", delta=f"Levier: {lt1:.1f}x", delta_color="normal")
+        c3.metric(f"Val. Init Warrant {p1_config['w_type']}", f"{w1v:,.2f} €", delta=f"Levier: {lw1:.1f}x", delta_color="normal")
 
 with cols_ctx[1]:
     if sp2:
-        st.markdown(f"#### 📅 Contexte {ticker2_input} au {p2_config[1]}")
+        st.markdown(f"#### 📅 Contexte {ticker2_input} au {p2_config['date_p']}")
         c1, c2, c3 = st.columns(3)
         c1.metric("Cours Sous-jacent", f"{sp2:,.2f} €")
-        c2.metric("Val. Init Turbo", f"{t2v:,.2f} €", delta=f"Levier: {lt2:.1f}x", delta_color="normal")
-        c3.metric("Val. Init Warrant", f"{w2v:,.2f} €", delta=f"Levier: {lw2:.1f}x", delta_color="normal")
+        c2.metric(f"Val. Init Turbo {p2_config['t_type']}", f"{t2v:,.2f} €", delta=f"Levier: {lt2:.1f}x", delta_color="normal")
+        c3.metric(f"Val. Init Warrant {p2_config['w_type']}", f"{w1v:,.2f} €", delta=f"Levier: {lw2:.1f}x", delta_color="normal")
 
-def plot_sim(sim_df, ticker, t_strike, w_strike):
+def plot_sim(sim_df, ticker, t_cfg, w_cfg):
     if sim_df is None: 
         st.warning(f"Pas de données disponibles pour {ticker} à cette date.")
         return
@@ -239,13 +260,13 @@ def plot_sim(sim_df, ticker, t_strike, w_strike):
                              line=dict(color='rgba(255, 255, 255, 0.3)', width=1.5), opacity=0.8), secondary_y=True)
     
     fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Action'], name='Action', line=dict(color='rgba(52, 152, 219, 0.8)')), secondary_y=False)
-    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Turbo'], name='Turbo (KO)', line=dict(color='rgba(231, 76, 60, 0.9)', width=2.5)), secondary_y=False)
-    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Warrant'], name='Warrant (BS)', line=dict(color='rgba(241, 196, 15, 0.8)')), secondary_y=False)
+    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Turbo'], name=f"Turbo {t_cfg['t_type']} (KO)", line=dict(color='rgba(231, 76, 60, 0.9)', width=2.5)), secondary_y=False)
+    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Warrant'], name=f"Warrant {w_cfg['w_type']} (BS)", line=dict(color='rgba(241, 196, 15, 0.8)')), secondary_y=False)
     
     # Strike lines tied to secondary Y
-    fig.add_trace(go.Scatter(x=[sim_df.index[0], sim_df.index[-1]], y=[t_strike, t_strike], name="Strike Turbo",
+    fig.add_trace(go.Scatter(x=[sim_df.index[0], sim_df.index[-1]], y=[t_cfg['t_strike'], t_cfg['t_strike']], name="Strike Turbo",
                              mode='lines', line=dict(color='rgba(231, 76, 60, 0.3)', dash='dash')), secondary_y=True)
-    fig.add_trace(go.Scatter(x=[sim_df.index[0], sim_df.index[-1]], y=[w_strike, w_strike], name="Strike Warrant",
+    fig.add_trace(go.Scatter(x=[sim_df.index[0], sim_df.index[-1]], y=[w_cfg['w_strike'], w_cfg['w_strike']], name="Strike Warrant",
                              mode='lines', line=dict(color='rgba(241, 196, 15, 0.3)', dash='dot')), secondary_y=True)
     
     fig.update_layout(title=f"Evolution de l'investissement ({ticker})", height=500, template="plotly_dark",
@@ -256,33 +277,33 @@ def plot_sim(sim_df, ticker, t_strike, w_strike):
     st.plotly_chart(fig, use_container_width=True, key=f"sim_{ticker}")
 
 col_res = st.columns(2)
-with col_res[0]: plot_sim(sim1, ticker1_input, p1_config[2], p1_config[4])
-with col_res[1]: plot_sim(sim2, ticker2_input, p2_config[2], p2_config[4])
+with col_res[0]: plot_sim(sim1, ticker1_input, p1_config, p1_config)
+with col_res[1]: plot_sim(sim2, ticker2_input, p2_config, p2_config)
 
 # --- Methodology Section ---
 st.divider()
 with st.expander("📚 Méthodologie et Détails des Calculs"):
     st.markdown(r"""
     ### 1. Modèle Black-Scholes (Warrants)
-    Le prix du Warrant est calculé à l'aide de la formule de Black-Scholes pour un Call :
-    $$C = S \cdot N(d_1) - K \cdot e^{-rT} \cdot N(d_2)$$
+    Le prix du Warrant est calculé à l'aide de la formule de Black-Scholes :
+    - **Call** : $C = S \cdot N(d_1) - K \cdot e^{-rT} \cdot N(d_2)$
+    - **Put** : $P = K \cdot e^{-rT} \cdot N(-d_2) - S \cdot N(-d_1)$
     
     Où :
     - **$S$ (Spot)** : Cours actuel du sous-jacent.
     - **$K$ (Strike)** : Prix d'exercice du warrant.
     - **$T$ (Time)** : Temps restant jusqu'à l'échéance (en années).
     - **$\sigma$ (Sigma)** : Volatilité implicite.
-    - **$r$** : Taux d'intérêt sans risque (fixé à 0% dans ce simulateur).
     - **$N(x)$** : Fonction de répartition de la loi normale standard.
     
     ### 2. Les "Grecques" simulées
-    - **Theta (Érosion Temporelle)** : Représente la perte de valeur du warrant due au passage du temps. Plus $T$ diminue, plus $C$ baisse, toutes choses égales par ailleurs. Cette perte s'accélère à l'approche de l'échéance.
-    - **Vega (Sensibilité Volatilité)** : Mesure l'impact d'un changement de volatilité implicite. Une hausse de $\sigma$ augmente la probabilité que le warrant finisse "dans la monnaie", augmentant ainsi son prix.
-    - **L'Échéance** : À la date d'échéance, la valeur du warrant est gelée à sa valeur intrinsèque : $\max(0, S_{\text{échéance}} - K)$.
+    - **Theta (Érosion Temporelle)** : Représente la perte de valeur du warrant due au passage du temps. Cette perte s'accélère à l'approche de l'échéance.
+    - **Vega (Sensibilité Volatilité)** : Mesure l'impact d'un changement de volatilité implicite. Une hausse de $\sigma$ augmente la valeur temporelle du warrant (Call et Put).
+    - **L'Échéance** : À la date d'échéance, la valeur du warrant est gelée à sa valeur intrinsèque : $\max(0, S-K)$ pour un Call, $\max(0, K-S)$ pour un Put.
     
     ### 3. Modèle Turbo (Barrière Désactivante)
-    Contrairement au Warrant, le Turbo a une valeur linéaire :
-    $$\text{Prix} = \frac{\max(0, S - \text{Strike})}{\text{Parité}}$$
+    - **Turbo Call** : $\text{Prix} = \frac{\max(0, S - \text{Strike})}{\text{Parité}}$. KO si $S \leq \text{Strike}$.
+    - **Turbo Put** : $\text{Prix} = \frac{\max(0, \text{Strike} - S)}{\text{Parité}}$. KO si $S \geq \text{Strike}$.
     
-    **Knock-Out (KO)** : Si à n'importe quel moment $S \leq \text{Strike}$, le produit est immédiatement désactivé et sa valeur devient définitivement **0 €**.
+    **Knock-Out (KO)** : Si la barrière est touchée (Strike), le produit est immédiatement désactivé et sa valeur devient **0 €**.
     """)
