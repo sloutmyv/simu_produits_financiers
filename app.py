@@ -204,30 +204,54 @@ def run_simulation(ticker, cfg):
     w_vol = cfg['w_vol']
     w_type = cfg['w_type']
 
-    def calc_warrant_series(row_price, current_date):
+    def calc_warrant_full(row_price, current_date):
         expiry_dt = pd.to_datetime(w_expiry)
         curr_dt = pd.to_datetime(current_date)
+        
+        if w_type == "Call":
+            intrinsic = max(0, row_price - w_strike) / w_ratio
+        else:
+            intrinsic = max(0, w_strike - row_price) / w_ratio
+            
         if curr_dt >= expiry_dt:
             price_at_expiry = get_price_at_date(close_prices[ticker], w_expiry)
             if w_type == "Call":
-                return max(0, price_at_expiry - w_strike) / w_ratio
+                final_val = max(0, price_at_expiry - w_strike) / w_ratio
             else:
-                return max(0, w_strike - price_at_expiry) / w_ratio
+                final_val = max(0, w_strike - price_at_expiry) / w_ratio
+            return final_val, final_val, 0
             
         days_to_expiry = (expiry_dt - curr_dt).days
         T = max(0, days_to_expiry / 365.0)
-        return black_scholes(row_price, w_strike, T, w_vol/100.0, type=w_type) / w_ratio
+        full_price = black_scholes(row_price, w_strike, T, w_vol/100.0, type=w_type) / w_ratio
+        time_value = max(0, full_price - intrinsic)
+        
+        return full_price, intrinsic, time_value
 
-    w_val_unit = pd.Series([calc_warrant_series(p, d) for p, d in zip(prices, prices.index)], index=prices.index)
-    w_val_start = calc_warrant_series(start_price, date_p)
+    w_stats = [calc_warrant_full(p, d) for p, d in zip(prices, prices.index)]
+    w_val_unit = pd.Series([s[0] for s in w_stats], index=prices.index)
+    w_intrinsic_unit = pd.Series([s[1] for s in w_stats], index=prices.index)
+    w_time_unit = pd.Series([s[2] for s in w_stats], index=prices.index)
+    
+    w_val_start, _, _ = calc_warrant_full(start_price, date_p)
     shares_warrant = cfg['invest'] / w_val_start if w_val_start > 0 else 0
+    
     sim_warrant = w_val_unit * shares_warrant
+    sim_w_intrinsic = w_intrinsic_unit * shares_warrant
+    sim_w_time = w_time_unit * shares_warrant
     
     # Leverage at start
     lev_t = (start_price / (t_val_start * t_ratio)) if (t_val_start > 0) else 0
     lev_w = (start_price / (w_val_start * w_ratio)) if (w_val_start > 0) else 0
     
-    return pd.DataFrame({'Action': sim_stock, 'Turbo': sim_turbo, 'Warrant': sim_warrant, 'Underlying': prices}, index=prices.index), start_price, t_val_start, w_val_start, lev_t, lev_w
+    return pd.DataFrame({
+        'Action': sim_stock, 
+        'Turbo': sim_turbo, 
+        'Warrant': sim_warrant, 
+        'W_Intrinsic': sim_w_intrinsic, 
+        'W_Time': sim_w_time, 
+        'Underlying': prices
+    }, index=prices.index), start_price, t_val_start, w_val_start, lev_t, lev_w
 
 sim1, sp1, t1v, w1v, lt1, lw1 = run_simulation(ticker1_input, p1_config)
 sim2, sp2, t2v, w2v, lt2, lw2 = run_simulation(ticker2_input, p2_config)
@@ -262,6 +286,10 @@ def plot_sim(sim_df, ticker, t_cfg, w_cfg):
     fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Action'], name='Action', line=dict(color='rgba(52, 152, 219, 0.8)')), secondary_y=False)
     fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Turbo'], name=f"Turbo {t_cfg['t_type']} (KO)", line=dict(color='rgba(231, 76, 60, 0.9)', width=2.5)), secondary_y=False)
     fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['Warrant'], name=f"Warrant {w_cfg['w_type']} (BS)", line=dict(color='rgba(241, 196, 15, 0.8)')), secondary_y=False)
+    
+    # Time Value decomposition (Theta potential)
+    fig.add_trace(go.Scatter(x=sim_df.index, y=sim_df['W_Time'], name='Valeur Temps (Theta)', 
+                             line=dict(color='rgba(241, 196, 15, 0.4)', dash='dot'), fill='tozeroy'), secondary_y=False)
     
     # Strike lines tied to secondary Y
     fig.add_trace(go.Scatter(x=[sim_df.index[0], sim_df.index[-1]], y=[t_cfg['t_strike'], t_cfg['t_strike']], name="Strike Turbo",
@@ -344,3 +372,24 @@ with st.expander("📚 Méthodologie et Détails des Calculs"):
     with col_ped2:
         st.markdown("**Vega : Plus le marché est volatil, plus le warrant est cher.**")
         st.plotly_chart(fig_vega, use_container_width=True, key="ped_vega")
+
+    # 3. Convergence Visualization (Warrant vs Turbo)
+    st.markdown("---")
+    st.markdown("**Convergence : Pourquoi le Warrant et le Turbo se ressemblent à faible volatilité ?**")
+    
+    # Calculate Turbo price (intrinsic)
+    t_price = (bs_s - bs_k) / bs_ratio if bs_type == "Call" else (bs_k - bs_s) / bs_ratio
+    t_price = max(0, t_price)
+    
+    fig_conv = go.Figure()
+    fig_conv.add_trace(go.Scatter(x=vol_range * 100, y=vega_prices, name="Prix Warrant", line=dict(color="#f1c40f", width=3)))
+    fig_conv.add_hline(y=t_price, line_dash="dash", line_color="#e74c3c", annotation_text="Prix Turbo (Valeur Intrinsèque)")
+    
+    fig_conv.update_layout(title="Convergence Warrant vs Turbo", xaxis_title="Volatilité Implicite (%)", yaxis_title="Prix (€)", 
+                           height=400, template="plotly_dark")
+    
+    st.plotly_chart(fig_conv, use_container_width=True, key="ped_conv")
+    st.info("""
+    **Observation** : À une volatilité très faible (proche de 0%), le prix du Warrant tend vers le prix du Turbo (valeur intrinsèque). 
+    C'est parce que la probabilité que le cours s'éloigne du strike devient minime, annulant la "valeur temps" (Theta) du warrant.
+    """)
